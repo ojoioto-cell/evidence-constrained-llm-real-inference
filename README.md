@@ -1,1 +1,727 @@
-# evidence-constrained-llm-real-inference
+# Evidence-Constrained LLM-Based Security Log Analysis and MITRE ATT&CK Mapping
+
+This repository provides the experimental code and synthetic/anonymized evaluation dataset for the paper:
+
+**Evidence-Constrained LLM-Based Security Log Analysis and MITRE ATT&CK Mapping**
+
+The goal of this project is to evaluate an evidence-constrained Large Language Model (LLM) pipeline for security log analysis, binary intrusion prediction, and MITRE ATT&CK Technique mapping.
+
+---
+
+## 1. Overview
+
+Security operations generate heterogeneous logs from systems such as WAF, EDR, proxy, firewall, and SIEM environments. Rule-based detection systems provide strong explainability, but they often require continuous tuning when attackers use unseen templates, command obfuscation, encoded payloads, path splitting, or benign near-miss events.
+
+LLMs can interpret semi-structured and unstructured logs using contextual information. However, directly using LLMs in security operations may introduce several risks:
+
+- hallucinated reasoning
+- unstable output format
+- unsupported ATT&CK Technique mapping
+- missing evidence
+- weak consistency with domain knowledge
+- uncontrolled false positives or false negatives
+
+To address these issues, this project implements an **evidence-constrained LLM pipeline** that combines:
+
+1. JSONL-based log normalization
+2. Evidence-first prompting
+3. Structured LLM output
+4. JSON/ATT&CK Validator
+5. Log-type-specific Sanity-Check
+6. Strict evidence matching
+7. Binary intrusion and ATT&CK Technique evaluation
+
+The central finding is that structural constraints are necessary for reliable LLM-based security log analysis, but overly strict hard-gate validation can severely reduce recall. Practical systems should combine evidence normalization, fuzzy matching, soft validation, and fallback decision mechanisms.
+
+---
+
+## 2. Important Disclosure
+
+This repository provides an actual LLM inference pipeline for a **synthetic/anonymized reproduction dataset**.
+
+It does **not** include raw operational security logs.
+
+Raw security logs may contain sensitive information such as:
+
+- internal IP addresses
+- user account names
+- internal domains
+- hostnames
+- system paths
+- security-device identifiers
+- customer information
+- internal security policies
+
+For this reason, this repository provides synthetic/anonymized JSONL events that preserve the evaluation structure described in the paper.
+
+Running the full experiment requires an OpenAI API key. Results may differ from the paper due to model updates, API backend changes, or nondeterministic LLM behavior.
+
+---
+
+## 3. Repository Structure
+
+```text
+evidence_constrained_llm_real_inference/
+├── README.md
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── config/
+│   ├── attack_mapping.json
+│   ├── sanity_rules.json
+│   └── validator_schema.json
+├── data/
+│   ├── events.jsonl
+│   └── labels.csv
+├── docs/
+│   └── paper_alignment.md
+├── prompts/
+│   └── evidence_first_prompt.txt
+├── scripts/
+│   ├── generate_synthetic_logs.py
+│   ├── run_llm_inference.py
+│   ├── evaluate_pipeline.py
+│   ├── validator.py
+│   ├── sanity_check.py
+│   ├── strict_evidence_match.py
+│   └── create_mock_llm_outputs.py
+└── results/
+    ├── llm_outputs_mock.jsonl
+    └── mock_eval/
+        ├── overall_metrics.csv
+        ├── confusion_matrix.csv
+        ├── obfuscation_metrics.csv
+        ├── error_analysis.csv
+        └── method_predictions.csv
+```
+
+---
+
+## 4. Pipeline Architecture
+
+The pipeline follows the workflow below:
+
+```text
+Raw Security Logs
+        ↓
+JSONL Normalization
+        ↓
+Evidence-first Prompt
+        ↓
+LLM Structured Inference
+        ↓
+Validator
+        ↓
+Sanity-Check
+        ↓
+Strict Evidence Matching / Final Decision
+        ↓
+Evaluation Outputs
+```
+
+### 4.1 JSONL Normalization
+
+Heterogeneous security logs are converted into a common JSONL event format. Each event includes fields such as:
+
+- event ID
+- log type
+- message
+- binary intrusion label
+- MITRE ATT&CK Technique label
+- tactic label
+- obfuscation level
+- condition type
+- candidate techniques
+
+### 4.2 Evidence-first Prompt
+
+The LLM is instructed to extract direct evidence from the input log message and return a structured JSON object. The evidence must be copied from the input message.
+
+### 4.3 Validator
+
+The Validator checks:
+
+- JSON parseability
+- required fields
+- field types
+- Technique ID format
+- MITRE ATT&CK Technique-Tactic consistency
+- evidence existence when `intrusion = 1`
+
+### 4.4 Sanity-Check
+
+The Sanity-Check module applies log-type-specific evidence rules. For example:
+
+- WAF logs: `UNION`, `1=1`, `../`, `/etc/passwd`
+- EDR PowerShell logs: `-enc`, `-e`, `EncodedCommand`, `IEX`
+- EDR WMI logs: `wmic.exe`, `process call create`
+- Proxy logs: `/tunnel`, `/upload`, `/put`, `c2`, `exfil`, `tunnel`
+
+### 4.5 Strict Evidence Matching
+
+Strict evidence matching verifies whether the evidence span generated by the LLM exists exactly in the original log message.
+
+This strict condition is useful for analyzing evidence grounding, but it may reduce recall when logs contain obfuscation, encoding, spacing changes, or token fragmentation.
+
+---
+
+## 5. Compared Methods
+
+This repository evaluates five configurations.
+
+### 5.1 Rule-only
+
+Uses only rule-based evidence matching without LLM inference.
+
+### 5.2 LLM-only
+
+Uses the raw structured LLM output.
+
+### 5.3 LLM+Validator
+
+Uses LLM output after JSON schema validation and ATT&CK consistency checking.
+
+### 5.4 LLM+Sanity-Check
+
+Combines the LLM intrusion prediction with log-type-specific Sanity-Check rules.
+
+### 5.5 Full Pipeline
+
+Requires all of the following conditions:
+
+- valid LLM JSON output
+- Validator pass
+- Sanity-Check pass
+- strict evidence matching pass
+
+The Full Pipeline is not intended to be the best-performing final model. It is a strict variant designed to analyze the recall degradation caused by hard-gate validation.
+
+---
+
+## 6. Dataset Summary
+
+The generated dataset follows the evaluation structure used in the paper.
+
+| Category | Count |
+|---|---:|
+| Total events | 4,800 |
+| Attack events | 3,600 |
+| Benign events | 1,200 |
+
+Attack events are distributed by obfuscation level:
+
+| Obfuscation Level | Count |
+|---|---:|
+| None | 1,033 |
+| Easy | 1,209 |
+| Medium | 648 |
+| Hard | 710 |
+
+Attack events use the following MITRE ATT&CK Technique labels:
+
+| Technique ID | Description |
+|---|---|
+| T1059 | Command and Scripting Interpreter |
+| T1190 | Exploit Public-Facing Application |
+| T1047 | Windows Management Instrumentation |
+| T1071 | Application Layer Protocol |
+
+Benign or non-ATT&CK events use the dummy label:
+
+| Dummy Label | Description |
+|---|---|
+| T0000 / TA0000 | Benign or Non-ATT&CK Activity |
+
+---
+
+## 7. Event Format
+
+Each event in `data/events.jsonl` follows this structure:
+
+```json
+{
+  "event_id": "evt_00001",
+  "log_type": "edr_powershell",
+  "message": "powershell.exe -enc SQBFAFgA IEX download cradle",
+  "intrusion": 1,
+  "technique": "T1059",
+  "tactic": "TA0002",
+  "obfuscation": "None",
+  "condition": "seen_template",
+  "template_type": "seen",
+  "is_ambiguous": false,
+  "candidate_techniques": ["T1059"]
+}
+```
+
+---
+
+## 8. Installation
+
+### 8.1 Clone Repository
+
+```bash
+git clone https://github.com/<YOUR_ID>/<REPO_NAME>.git
+cd <REPO_NAME>
+```
+
+### 8.2 Create Virtual Environment
+
+Linux/macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Windows:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### 8.3 Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+Required packages:
+
+```text
+openai
+python-dotenv
+tqdm
+```
+
+---
+
+## 9. API Configuration
+
+This project supports actual LLM inference through the OpenAI API.
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```text
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_TEMPERATURE=0.1
+OPENAI_MAX_OUTPUT_TOKENS=512
+```
+
+You may also set environment variables directly:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4.1-mini"
+export OPENAI_TEMPERATURE="0.1"
+export OPENAI_MAX_OUTPUT_TOKENS="512"
+```
+
+The paper setting is:
+
+| Parameter | Value |
+|---|---|
+| Model | gpt-4.1-mini |
+| Temperature | 0.1 |
+| Max output tokens | 512 |
+| Response policy | First response only |
+
+Do not commit your `.env` file to GitHub.
+
+---
+
+## 10. Generate Dataset
+
+The package already includes:
+
+```text
+data/events.jsonl
+data/labels.csv
+```
+
+To regenerate the synthetic/anonymized dataset:
+
+```bash
+python scripts/generate_synthetic_logs.py
+```
+
+Generated files:
+
+```text
+data/events.jsonl
+data/labels.csv
+```
+
+---
+
+## 11. Evidence-First Prompt
+
+The prompt template is located at:
+
+```text
+prompts/evidence_first_prompt.txt
+```
+
+The LLM must return JSON only.
+
+Expected output schema:
+
+```json
+{
+  "event_id": "evt_00001",
+  "intrusion": 1,
+  "technique": ["T1059"],
+  "tactic": ["TA0002"],
+  "evidence": ["powershell.exe", "-enc", "IEX"],
+  "confidence": 0.92
+}
+```
+
+Prompt rules:
+
+1. Evidence must be copied directly from the input log message.
+2. If no direct evidence exists, `intrusion` must be `0`.
+3. Output must be valid JSON.
+4. Technique and Tactic must be consistent with MITRE ATT&CK mapping.
+5. The model must not rely on unsupported speculation.
+
+---
+
+## 12. Run Actual LLM Inference
+
+### 12.1 Smoke Test
+
+Run only 20 events first:
+
+```bash
+python scripts/run_llm_inference.py \
+  --input data/events.jsonl \
+  --output results/llm_outputs.jsonl \
+  --limit 20
+```
+
+### 12.2 Full Inference
+
+Run all 4,800 events:
+
+```bash
+python scripts/run_llm_inference.py \
+  --input data/events.jsonl \
+  --output results/llm_outputs.jsonl
+```
+
+The script supports resume. If `results/llm_outputs.jsonl` already contains outputs for some `event_id`s, those events are skipped.
+
+### 12.3 Optional Sleep Interval
+
+To reduce API rate pressure:
+
+```bash
+python scripts/run_llm_inference.py \
+  --input data/events.jsonl \
+  --output results/llm_outputs.jsonl \
+  --sleep 0.2
+```
+
+---
+
+## 13. Offline Mock Test
+
+If you want to test the pipeline without API calls, use the mock output generator.
+
+```bash
+python scripts/create_mock_llm_outputs.py \
+  --input data/events.jsonl \
+  --output results/llm_outputs_mock.jsonl
+```
+
+Then evaluate:
+
+```bash
+python scripts/evaluate_pipeline.py \
+  --events data/events.jsonl \
+  --llm_outputs results/llm_outputs_mock.jsonl \
+  --out_dir results/mock_eval
+```
+
+This mode is only for pipeline testing. It is not the actual LLM experiment.
+
+---
+
+## 14. Evaluate Pipeline
+
+After generating actual LLM outputs, run:
+
+```bash
+python scripts/evaluate_pipeline.py \
+  --events data/events.jsonl \
+  --llm_outputs results/llm_outputs.jsonl \
+  --out_dir results
+```
+
+Generated output files:
+
+```text
+results/overall_metrics.csv
+results/confusion_matrix.csv
+results/obfuscation_metrics.csv
+results/error_analysis.csv
+results/method_predictions.csv
+```
+
+---
+
+## 15. Metrics
+
+### 15.1 Binary Intrusion Detection
+
+The binary intrusion task uses:
+
+- TP: attack event predicted as intrusion
+- FP: benign event predicted as intrusion
+- TN: benign event predicted as benign
+- FN: attack event predicted as benign
+
+Metrics:
+
+```text
+Precision = TP / (TP + FP)
+Recall    = TP / (TP + FN)
+F1-score  = 2 × Precision × Recall / (Precision + Recall)
+```
+
+### 15.2 ATT&CK Technique Mapping
+
+MITRE ATT&CK Technique mapping is treated as a multiclass classification task.
+
+The main metric is:
+
+```text
+ATT&CK F1-macro
+```
+
+The dummy label `T0000` is excluded from ATT&CK Technique performance aggregation.
+
+---
+
+## 16. Reported Paper Results
+
+The paper reports the following aggregate results.
+
+### 16.1 Overall Performance
+
+| Method | Event | Precision | Recall | F1-score | Tech. F1 |
+|---|---:|---:|---:|---:|---:|
+| Rule-only | 4,800 | 0.9597 | 0.3308 | 0.4920 | 0.4476 |
+| LLM-only | 4,800 | 0.9847 | 0.7867 | 0.8746 | 0.6593 |
+| LLM+Validator | 4,800 | 0.9847 | 0.7856 | 0.8739 | 0.6587 |
+| LLM+Sanity-Check | 4,800 | 0.9973 | 0.6056 | 0.7535 | 0.6625 |
+| Full Pipeline | 4,800 | 1.0000 | 0.0633 | 0.1191 | 0.0841 |
+
+### 16.2 Confusion Matrix
+
+| Method | TP | FP | TN | FN |
+|---|---:|---:|---:|---:|
+| Rule-only | 1,191 | 50 | 1,150 | 2,409 |
+| LLM-only | 2,832 | 44 | 1,156 | 768 |
+| LLM+Validator | 2,828 | 44 | 1,156 | 772 |
+| LLM+Sanity-Check | 2,180 | 6 | 1,194 | 1,420 |
+| Full Pipeline | 228 | 0 | 1,200 | 3,372 |
+
+### 16.3 Obfuscation-Level Performance
+
+| Obfuscation | Method | Attack Events | Recall | Tech. F1 |
+|---|---|---:|---:|---:|
+| None | LLM-only | 1,033 | 0.7890 | 0.6697 |
+| None | LLM+Sanity-Check | 1,033 | 0.5992 | 0.6461 |
+| None | Full Pipeline | 1,033 | 0.0678 | 0.0866 |
+| Easy | LLM-only | 1,209 | 0.7841 | 0.6564 |
+| Easy | LLM+Sanity-Check | 1,209 | 0.5980 | 0.6268 |
+| Easy | Full Pipeline | 1,209 | 0.0860 | 0.0985 |
+| Medium | LLM-only | 648 | 0.7515 | 0.6444 |
+| Medium | LLM+Sanity-Check | 648 | 0.5725 | 0.6289 |
+| Medium | Full Pipeline | 648 | 0.0540 | 0.0810 |
+| Hard | LLM-only | 710 | 0.8197 | 0.6578 |
+| Hard | LLM+Sanity-Check | 710 | 0.6577 | 0.7502 |
+| Hard | Full Pipeline | 710 | 0.0268 | 0.0457 |
+
+### 16.4 Error Analysis
+
+| Error Type | Count | Cause | Fix |
+|---|---:|---|---|
+| Evidence mismatch | 1,952 | String mismatch | normalization, fuzzy matching |
+| Other FN | 665 | Final confirmation failure | soft validation |
+| Unseen template | 399 | Out-of-template variant | template augmentation |
+| Hard obfuscation | 203 | Obfuscation matching failure | decoding, token normalization |
+| Ambiguous label | 153 | Candidate technique confusion | Top-k scoring |
+
+---
+
+## 17. Important Reproducibility Note
+
+Actual LLM inference results may differ from the reported paper results due to:
+
+- model updates
+- API backend changes
+- nondeterministic serving behavior
+- prompt interpretation differences
+- JSON formatting differences
+- policy or safety behavior changes
+- API version changes
+
+Therefore, this repository provides two modes:
+
+1. **Actual LLM inference mode**  
+   Calls the OpenAI API and generates new LLM outputs.
+
+2. **Offline mock mode**  
+   Tests the local pipeline without API calls.
+
+The reported paper results should be interpreted as results observed under the experimental setting used at the time of the study.
+
+---
+
+## 18. Operational Usage
+
+This pipeline can be used as a prototype for security operations workflows.
+
+### 18.1 Example Operational Flow
+
+```text
+Security Logs
+    ↓
+JSONL Normalization
+    ↓
+Evidence-first LLM Inference
+    ↓
+Validator
+    ↓
+Sanity-Check
+    ↓
+Strict Evidence Matching / Soft Validation
+    ↓
+Analyst Review or Ticket Creation
+```
+
+### 18.2 Recommended Operational Mode
+
+For real security operations, do not use the Full Pipeline as a hard final decision engine.
+
+Recommended deployment:
+
+- Use LLM-only output as a semantic analysis signal.
+- Use Validator for output format and ATT&CK consistency.
+- Use Sanity-Check as a high-precision confidence signal.
+- Use evidence normalization and fuzzy matching before final decision.
+- Send uncertain events to analyst review.
+
+### 18.3 Recommended Decision Policy
+
+```text
+High confidence + valid evidence + sanity rule match
+    → high-priority alert
+
+LLM intrusion = 1 but sanity rule mismatch
+    → analyst review or fallback analysis
+
+Validator failure
+    → regenerate, repair, or manual review
+
+Strict evidence mismatch
+    → evidence normalization and fuzzy matching
+```
+
+---
+
+## 19. Security and Privacy Considerations
+
+Do not send raw operational logs to external LLM APIs without proper review.
+
+Before using real logs:
+
+- remove or mask internal IP addresses
+- remove user names and account IDs
+- replace internal domains
+- replace hostnames
+- remove sensitive paths
+- remove credentials or tokens
+- remove customer information
+- review organizational data-handling policies
+
+Example anonymization:
+
+```text
+10.10.23.15          → 192.0.2.10
+user.kim             → user_a
+internal.corp.local  → example.internal
+C:\Users\kim\        → C:\Users\user_a\
+```
+
+---
+
+## 20. Troubleshooting
+
+### OPENAI_API_KEY is missing
+
+Set your API key in `.env`:
+
+```text
+OPENAI_API_KEY=sk-...
+```
+
+Or export it:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### JSON parsing error
+
+Check raw LLM outputs:
+
+```text
+results/llm_outputs.jsonl
+```
+
+The prompt requests JSON-only output, but model responses may occasionally require repair or regeneration.
+
+### API rate limit
+
+Use the `--sleep` option:
+
+```bash
+python scripts/run_llm_inference.py \
+  --input data/events.jsonl \
+  --output results/llm_outputs.jsonl \
+  --sleep 0.5
+```
+
+### Results differ from the paper
+
+This is expected when using live LLM APIs. LLM outputs can change due to model or API updates.
+
+---
+
+## 21. Citation
+
+If you use this repository, please cite:
+
+```text
+E. Kim and T.-S. Shon, "Evidence-Constrained LLM-Based Security Log Analysis and MITRE ATT&CK Mapping," Journal of Digital Contents Society, 2025.
+```
+
+---
+
+## 22. License
+
+This repository is provided for academic review and reproducibility purposes.
+
+If you plan to use it in operational security environments, review your organization’s data handling, privacy, and external API usage policies first.
